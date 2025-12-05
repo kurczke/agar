@@ -14,6 +14,8 @@ lekki klient HTML5/canvas z minimapą, trybem widza i responsywnym interfejsem.
 
 ## Wymagania
 - Docker oraz docker-compose **lub** środowisko Node.js 18+ (jeśli chcesz uruchomić bez konteneryzacji).
+- W zależności od środowiska pakiet `nanoid` jest przypięty do wersji 3.3.7, która działa z CommonJS
+  (`require`).
 
 ## Uruchomienie (Docker)
 ```bash
