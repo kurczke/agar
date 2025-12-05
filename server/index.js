@@ -51,7 +51,7 @@ function radiusFromMass(mass) {
 }
 
 function speedFromMass(mass) {
-  return 26 / Math.sqrt(mass + 1);
+  return 260 / Math.sqrt(mass + 10);
 }
 
 function spawnFood() {
@@ -72,7 +72,7 @@ function spawnPlayer(name) {
   const id = nanoid();
   const color = `hsl(${Math.random() * 360},80%,55%)`;
   const pos = randomPosition();
-  const cell = { ...pos, mass: START_MASS, id: nanoid(), mergeAt: Date.now() };
+  const cell = { ...pos, mass: START_MASS, id: nanoid(), mergeAt: Date.now(), vx: 0, vy: 0 };
   const player = {
     id,
     name: name || 'Anon',
@@ -94,8 +94,10 @@ function moveCells(player) {
     const dy = player.target.y - cell.y;
     const dist = Math.hypot(dx, dy) || 1;
     const speed = speedFromMass(cell.mass) / TICK_RATE;
-    cell.x += (dx / dist) * speed;
-    cell.y += (dy / dist) * speed;
+    cell.x += (dx / dist) * speed + (cell.vx || 0);
+    cell.y += (dy / dist) * speed + (cell.vy || 0);
+    if (cell.vx) cell.vx *= 0.9;
+    if (cell.vy) cell.vy *= 0.9;
     cell.x = Math.max(-WORLD_SIZE / 2, Math.min(WORLD_SIZE / 2, cell.x));
     cell.y = Math.max(-WORLD_SIZE / 2, Math.min(WORLD_SIZE / 2, cell.y));
   }
@@ -238,7 +240,18 @@ function handleSplit(player) {
     const angle = Math.atan2(player.target.y - cell.y, player.target.x - cell.x);
     const nx = cell.x + Math.cos(angle) * (radiusFromMass(cell.mass) * 2);
     const ny = cell.y + Math.sin(angle) * (radiusFromMass(cell.mass) * 2);
-    newCells.push({ id: nanoid(), x: nx, y: ny, mass: splitMass, mergeAt: Date.now() + RECOMBINE_DELAY });
+    const impulse = 6;
+    cell.vx = (cell.vx || 0) + Math.cos(angle) * impulse * -0.5;
+    cell.vy = (cell.vy || 0) + Math.sin(angle) * impulse * -0.5;
+    newCells.push({
+      id: nanoid(),
+      x: nx,
+      y: ny,
+      mass: splitMass,
+      mergeAt: Date.now() + RECOMBINE_DELAY,
+      vx: Math.cos(angle) * impulse,
+      vy: Math.sin(angle) * impulse,
+    });
     cell.mergeAt = Date.now() + RECOMBINE_DELAY;
   }
   player.cells.push(...newCells);

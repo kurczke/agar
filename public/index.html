@@ -199,13 +199,20 @@
         connect(name);
       });
 
+      function translatePointer(clientX, clientY) {
+        return {
+          x: camera.x + (clientX - window.innerWidth / 2) / camera.scale,
+          y: camera.y + (clientY - window.innerHeight / 2) / camera.scale,
+        };
+      }
+
       window.addEventListener('mousemove', (e) => {
-        target = { x: e.clientX - window.innerWidth / 2 + camera.x, y: e.clientY - window.innerHeight / 2 + camera.y };
+        target = translatePointer(e.clientX, e.clientY);
         ws?.readyState === 1 && ws.send(JSON.stringify({ type: 'move', data: target }));
       });
       window.addEventListener('touchmove', (e) => {
         const t = e.touches[0];
-        target = { x: t.clientX - window.innerWidth / 2 + camera.x, y: t.clientY - window.innerHeight / 2 + camera.y };
+        target = translatePointer(t.clientX, t.clientY);
         ws?.readyState === 1 && ws.send(JSON.stringify({ type: 'move', data: target }));
       });
       window.addEventListener('keydown', (e) => {
