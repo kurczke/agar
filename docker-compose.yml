@@ -1,0 +1,9 @@
+version: '3.9'
+services:
+  agario:
+    build: .
+    ports:
+      - "3886:80"
+    restart: unless-stopped
+    environment:
+      - PORT=80

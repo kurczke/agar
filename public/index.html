@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Agar.io selfhost</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      body {
+        margin: 0;
+        font-family: 'Segoe UI', sans-serif;
+        background: #0b0b12;
+        color: #f5f5f5;
+        overflow: hidden;
+      }
+      #overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(8, 10, 20, 0.9);
+        z-index: 10;
+      }
+      #menu {
+        background: #13162a;
+        padding: 24px;
+        border-radius: 12px;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
+        width: 360px;
+      }
+      label {
+        display: block;
+        margin-bottom: 8px;
+        font-weight: 600;
+      }
+      input[type='text'] {
+        width: 100%;
+        padding: 10px 12px;
+        border-radius: 8px;
+        border: 1px solid #2d3258;
+        background: #0f1224;
+        color: #f5f5f5;
+      }
+      button {
+        width: 100%;
+        padding: 12px;
+        border-radius: 10px;
+        border: none;
+        background: linear-gradient(135deg, #5f75ff, #8a5dff);
+        color: #fff;
+        font-size: 16px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: transform 0.1s ease, box-shadow 0.1s ease;
+      }
+      button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 6px 16px rgba(90, 110, 255, 0.35);
+      }
+      #hud {
+        position: fixed;
+        top: 12px;
+        left: 12px;
+        background: rgba(13, 15, 26, 0.7);
+        padding: 10px 12px;
+        border-radius: 10px;
+        font-size: 14px;
+        backdrop-filter: blur(6px);
+      }
+      #leaderboard {
+        position: fixed;
+        top: 12px;
+        right: 12px;
+        width: 240px;
+        background: rgba(13, 15, 26, 0.7);
+        padding: 12px;
+        border-radius: 10px;
+        backdrop-filter: blur(6px);
+      }
+      #leaderboard h3 {
+        margin: 0 0 8px;
+        font-size: 15px;
+      }
+      #leaderboard ol {
+        margin: 0;
+        padding-left: 16px;
+        line-height: 1.5;
+      }
+      #instructions {
+        position: fixed;
+        bottom: 12px;
+        left: 12px;
+        background: rgba(13, 15, 26, 0.7);
+        padding: 10px 12px;
+        border-radius: 10px;
+        font-size: 13px;
+        line-height: 1.6;
+      }
+      #minimap {
+        position: fixed;
+        bottom: 12px;
+        right: 12px;
+        width: 180px;
+        height: 180px;
+        background: rgba(13, 15, 26, 0.7);
+        border-radius: 12px;
+        padding: 8px;
+        box-sizing: border-box;
+      }
+      #miniCanvas {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+      canvas {
+        width: 100vw;
+        height: 100vh;
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="overlay">
+      <div id="menu">
+        <h2>Start gry</h2>
+        <label for="nickname">Nick gracza</label>
+        <input id="nickname" type="text" placeholder="Twój nick" value="Gość" />
+        <p style="font-size: 13px; color: #aeb3d0">
+          Sterowanie: myszką kierujesz ruch, spacja = podział, W = wyrzut masy, Enter = odrodzenie.
+        </p>
+        <button id="play">Wejdź do gry</button>
+      </div>
+    </div>
+    <canvas id="game"></canvas>
+    <div id="hud">Masa: <span id="score">0</span> | Najlepszy wynik: <span id="best">0</span></div>
+    <div id="leaderboard">
+      <h3>TOP 10</h3>
+      <ol id="leaders"></ol>
+    </div>
+    <div id="instructions">
+      <strong>Instrukcja:</strong> Jedz kuleczki i mniejszych graczy, unikaj wirusów kiedy jesteś duży. Po śmierci tryb
+      widza pokazuje najlepszych graczy. Odrodzenie Enter.
+    </div>
+    <div id="minimap">
+      <canvas id="miniCanvas"></canvas>
+    </div>
+    <script>
+      const canvas = document.getElementById('game');
+      const ctx = canvas.getContext('2d');
+      const mini = document.getElementById('miniCanvas');
+      const miniCtx = mini.getContext('2d');
+      let ws;
+      let playerId = null;
+      let color = '#fff';
+      let worldSize = 5000;
+      let snapshot = null;
+      let target = { x: 0, y: 0 };
+      let camera = { x: 0, y: 0, scale: 1 };
+      let best = 0;
+
+      function resize() {
+        canvas.width = window.innerWidth * devicePixelRatio;
+        canvas.height = window.innerHeight * devicePixelRatio;
+        ctx.scale(devicePixelRatio, devicePixelRatio);
+        mini.width = 180 * devicePixelRatio;
+        mini.height = 180 * devicePixelRatio;
+        miniCtx.scale(devicePixelRatio, devicePixelRatio);
+      }
+      window.addEventListener('resize', resize);
+      resize();
+
+      function connect(name) {
+        ws = new WebSocket(location.origin.replace('http', 'ws'));
+        ws.addEventListener('open', () => {
+          ws.send(JSON.stringify({ type: 'join', data: { name } }));
+        });
+        ws.addEventListener('message', (ev) => {
+          const { type, data } = JSON.parse(ev.data);
+          if (type === 'welcome') {
+            playerId = data.id;
+            color = data.color;
+            worldSize = data.worldSize;
+            document.getElementById('overlay').style.display = 'none';
+          }
+          if (type === 'update') {
+            snapshot = data;
+          }
+        });
+      }
+
+      document.getElementById('play').addEventListener('click', () => {
+        const name = document.getElementById('nickname').value || 'Anon';
+        connect(name);
+      });
+
+      function translatePointer(clientX, clientY) {
+        return {
+          x: camera.x + (clientX - window.innerWidth / 2) / camera.scale,
+          y: camera.y + (clientY - window.innerHeight / 2) / camera.scale,
+        };
+      }
+
+      window.addEventListener('mousemove', (e) => {
+        target = translatePointer(e.clientX, e.clientY);
+        ws?.readyState === 1 && ws.send(JSON.stringify({ type: 'move', data: target }));
+      });
+      window.addEventListener('touchmove', (e) => {
+        const t = e.touches[0];
+        target = translatePointer(t.clientX, t.clientY);
+        ws?.readyState === 1 && ws.send(JSON.stringify({ type: 'move', data: target }));
+      });
+      window.addEventListener('keydown', (e) => {
+        if (e.code === 'Space') {
+          ws?.send(JSON.stringify({ type: 'split' }));
+        }
+        if (e.code === 'KeyW') {
+          ws?.send(JSON.stringify({ type: 'eject' }));
+        }
+        if (e.code === 'Enter' && snapshot) {
+          ws?.send(JSON.stringify({ type: 'respawn', data: { name: document.getElementById('nickname').value || 'Anon' } }));
+        }
+      });
+
+      function interpolateCamera(myPlayer) {
+        const cells = myPlayer?.cells?.length ? myPlayer.cells : snapshot?.leaderboard?.length ?
+            snapshot.players.find((p) => p.id === snapshot.leaderboard[0].id)?.cells : null;
+        if (!cells?.length) return;
+        const centerX = cells.reduce((s, c) => s + c.x, 0) / cells.length;
+        const centerY = cells.reduce((s, c) => s + c.y, 0) / cells.length;
+        const totalMass = cells.reduce((s, c) => s + c.mass, 0);
+        const desiredScale = Math.min(1.8, Math.max(0.2, 150 / Math.sqrt(totalMass)));
+        camera.x += (centerX - camera.x) * 0.08;
+        camera.y += (centerY - camera.y) * 0.08;
+        camera.scale += (desiredScale - camera.scale) * 0.1;
+      }
+
+      function drawCell(cell, fill, name) {
+        const r = Math.sqrt(cell.mass) * 4 * camera.scale;
+        const x = window.innerWidth / 2 + (cell.x - camera.x) * camera.scale;
+        const y = window.innerHeight / 2 + (cell.y - camera.y) * camera.scale;
+        ctx.beginPath();
+        ctx.fillStyle = fill;
+        ctx.strokeStyle = '#111';
+        ctx.lineWidth = 2;
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        if (name) {
+          ctx.fillStyle = '#fff';
+          ctx.font = `${Math.max(12, r / 3)}px Inter, sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(name, x, y);
+        }
+      }
+
+      function drawGrid() {
+        ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (let x = -worldSize / 2; x < worldSize / 2; x += 120) {
+          const sx = window.innerWidth / 2 + (x - camera.x) * camera.scale;
+          ctx.moveTo(sx, 0);
+          ctx.lineTo(sx, window.innerHeight);
+        }
+        for (let y = -worldSize / 2; y < worldSize / 2; y += 120) {
+          const sy = window.innerHeight / 2 + (y - camera.y) * camera.scale;
+          ctx.moveTo(0, sy);
+          ctx.lineTo(window.innerWidth, sy);
+        }
+        ctx.stroke();
+      }
+
+      function drawMinimap(me) {
+        miniCtx.clearRect(0, 0, mini.width, mini.height);
+        miniCtx.save();
+        miniCtx.scale(1 / devicePixelRatio, 1 / devicePixelRatio);
+        miniCtx.strokeStyle = 'rgba(255,255,255,0.25)';
+        miniCtx.strokeRect(2, 2, mini.width / devicePixelRatio - 4, mini.height / devicePixelRatio - 4);
+        const scale = (mini.width / devicePixelRatio - 16) / worldSize;
+        const offset = { x: mini.width / devicePixelRatio / 2, y: mini.height / devicePixelRatio / 2 };
+        if (snapshot) {
+          for (const p of snapshot.players) {
+            for (const cell of p.cells) {
+              const mx = offset.x + cell.x * scale;
+              const my = offset.y + cell.y * scale;
+              miniCtx.fillStyle = p.id === me?.id ? '#5f75ff' : 'rgba(255,255,255,0.6)';
+              miniCtx.beginPath();
+              miniCtx.arc(mx, my, 3, 0, Math.PI * 2);
+              miniCtx.fill();
+            }
+          }
+        }
+        miniCtx.restore();
+      }
+
+      function render() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.save();
+        ctx.scale(1 / devicePixelRatio, 1 / devicePixelRatio);
+        drawGrid();
+        if (snapshot) {
+          const me = snapshot.players.find((p) => p.id === playerId);
+          interpolateCamera(me);
+          for (const food of snapshot.food) {
+            drawCell(food, food.color);
+          }
+          for (const pellet of snapshot.ejected) {
+            drawCell(pellet, pellet.color);
+          }
+          for (const virus of snapshot.viruses) {
+            drawCell(virus, '#2b8a3e');
+          }
+          for (const p of snapshot.players) {
+            for (const cell of p.cells) {
+              drawCell(cell, p.color, p.name);
+            }
+          }
+          const score = me?.cells?.reduce((s, c) => s + c.mass, 0) || 0;
+          best = Math.max(best, score);
+          document.getElementById('score').textContent = Math.floor(score);
+          document.getElementById('best').textContent = Math.floor(best);
+          const board = document.getElementById('leaders');
+          board.innerHTML = snapshot.leaderboard
+            .map((e, i) => `<li>${i + 1}. ${e.name} — ${e.score}</li>`)
+            .join('');
+          drawMinimap(me);
+        }
+        ctx.restore();
+        requestAnimationFrame(render);
+      }
+      render();
+    </script>
+  </body>
+</html>
