@@ -9,6 +9,7 @@ const TICK_RATE = 60; // physics updates per second
 const BROADCAST_RATE = 20; // client updates per second
 const WORLD_SIZE = 7000;
 const START_MASS = 40;
+const SPAWN_BOOST_MS = 2500;
 const FOOD_AMOUNT = 2800;
 const FOOD_VARIANTS = [
   { mass: 1, color: '#7bc8ff' },
@@ -57,10 +58,11 @@ function radiusFromMass(mass) {
   return Math.sqrt(mass) * 4;
 }
 
-function speedFromMass(mass, cellsCount = 1) {
-  const base = 340 / Math.sqrt(mass + 14);
-  const multi = 1 + Math.max(0, 0.35 - Math.min(0.25, cellsCount * 0.015));
-  return Math.max(22, base * multi);
+function speedFromMass(mass, cellsCount = 1, boosted = false) {
+  const base = 390 / Math.sqrt(mass + 10);
+  const multi = 1 + Math.max(0, 0.38 - Math.min(0.26, cellsCount * 0.015));
+  const boost = boosted ? 1.25 : 1;
+  return Math.max(26, base * multi * boost);
 }
 
 function spawnFood() {
@@ -90,6 +92,7 @@ function spawnPlayer(name) {
     cells: [cell],
     target: { x: pos.x, y: pos.y },
     alive: true,
+    spawnBoostUntil: Date.now() + SPAWN_BOOST_MS,
     score: START_MASS,
     best: START_MASS,
     isSpectating: false,
@@ -100,11 +103,12 @@ function spawnPlayer(name) {
 
 function moveCells(player) {
   const cellCount = player.cells.length;
+  const boosted = Date.now() < (player.spawnBoostUntil || 0);
   for (const cell of player.cells) {
     const dx = player.target.x - cell.x;
     const dy = player.target.y - cell.y;
     const dist = Math.hypot(dx, dy) || 1;
-    const speed = speedFromMass(cell.mass, cellCount) / TICK_RATE;
+    const speed = speedFromMass(cell.mass, cellCount, boosted) / TICK_RATE;
     cell.x += (dx / dist) * speed + (cell.vx || 0);
     cell.y += (dy / dist) * speed + (cell.vy || 0);
     if (cell.vx) cell.vx *= 0.88;
@@ -216,18 +220,19 @@ function handlePlayerCollisions(player) {
     for (const cell of player.cells) {
       for (const target of other.cells) {
         const dist = distance(cell, target);
-        if (dist < radiusFromMass(cell.mass) && cell.mass > target.mass * 1.12) {
-          cell.mass += target.mass;
-          other.cells.splice(other.cells.indexOf(target), 1);
-          other.score = Math.max(0, other.score - target.mass);
-          if (other.cells.length === 0) {
-            other.alive = false;
-            other.isSpectating = true;
-          }
+      if (dist < radiusFromMass(cell.mass) && cell.mass > target.mass * 1.12) {
+        cell.mass += target.mass;
+        other.cells.splice(other.cells.indexOf(target), 1);
+        other.score = Math.max(0, other.score - target.mass);
+        if (other.cells.length === 0) {
+          other.alive = false;
+          other.isSpectating = true;
+          other.spawnBoostUntil = 0;
         }
       }
     }
   }
+}
 }
 
 function decayMass(player) {
@@ -419,9 +424,11 @@ wss.on('connection', (ws) => {
       } else if (type === 'eject') {
         handleEject(player);
       } else if (type === 'respawn') {
-        if (player) gameState.players.delete(player.id);
-        player = spawnPlayer(data?.name || player?.name);
-        sendLobby(ws, player);
+        if (player && !player.alive) {
+          gameState.players.delete(player.id);
+          player = spawnPlayer(data?.name || player?.name);
+          sendLobby(ws, player);
+        }
       }
     } catch (err) {
       console.error('Bad packet', err);

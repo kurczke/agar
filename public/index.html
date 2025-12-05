@@ -166,10 +166,12 @@
       let color = '#fff';
       let worldSize = 5000;
       let snapshot = null;
+      let smoothCells = new Map();
       let target = { x: 0, y: 0 };
       let camera = { x: 0, y: 0, scale: 1 };
       let best = 0;
       let joining = false;
+      let respawnRequested = false;
       let lastMoveSent = 0;
 
       function resize() {
@@ -201,6 +203,8 @@
             document.getElementById('overlay').style.display = 'none';
             playBtn.textContent = 'Wejdź do gry';
             joining = false;
+            respawnRequested = false;
+            smoothCells.clear();
           }
           if (type === 'update') {
             snapshot = data;
@@ -250,10 +254,37 @@
         if (e.code === 'KeyW') {
           ws?.send(JSON.stringify({ type: 'eject' }));
         }
-        if (e.code === 'Enter' && snapshot) {
-          ws?.send(JSON.stringify({ type: 'respawn', data: { name: document.getElementById('nickname').value || 'Anon' } }));
+        if (e.code === 'Enter' && snapshot && ws?.readyState === WebSocket.OPEN) {
+          const me = snapshot.players.find((p) => p.id === playerId);
+          if (respawnRequested) return;
+          if (!me || me.alive) return;
+          respawnRequested = true;
+          ws.send(
+            JSON.stringify({ type: 'respawn', data: { name: document.getElementById('nickname').value || 'Anon' } })
+          );
         }
       });
+
+      function smoothWorld() {
+        if (!snapshot) return;
+        const keep = new Set();
+        for (const p of snapshot.players) {
+          for (const cell of p.cells) {
+            const key = `${p.id}:${cell.id}`;
+            keep.add(key);
+            const prev = smoothCells.get(key) || { x: cell.x, y: cell.y, mass: cell.mass, color: p.color, name: p.name };
+            prev.x += (cell.x - prev.x) * 0.25;
+            prev.y += (cell.y - prev.y) * 0.25;
+            prev.mass += (cell.mass - prev.mass) * 0.18;
+            prev.color = p.color;
+            prev.name = p.name;
+            smoothCells.set(key, prev);
+          }
+        }
+        for (const key of Array.from(smoothCells.keys())) {
+          if (!keep.has(key)) smoothCells.delete(key);
+        }
+      }
 
       function interpolateCamera(myPlayer) {
         const cells = myPlayer?.cells?.length ? myPlayer.cells : snapshot?.leaderboard?.length ?
@@ -341,6 +372,7 @@
         drawGrid();
         if (snapshot) {
           const me = snapshot.players.find((p) => p.id === playerId);
+          smoothWorld();
           interpolateCamera(me);
           for (const food of snapshot.food) {
             drawCell(food, food.color);
@@ -351,10 +383,8 @@
           for (const virus of snapshot.viruses) {
             drawCell(virus, '#2b8a3e');
           }
-          for (const p of snapshot.players) {
-            for (const cell of p.cells) {
-              drawCell(cell, p.color, p.name);
-            }
+          for (const cell of smoothCells.values()) {
+            drawCell(cell, cell.color, cell.name);
           }
           const score = me?.cells?.reduce((s, c) => s + c.mass, 0) || 0;
           best = Math.max(best, score);
