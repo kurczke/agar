@@ -5,12 +5,17 @@ symulację serwera w Node.js (podziały, wyrzut masy, wirusy, masa resztkowa, ł
 lekki klient HTML5/canvas z minimapą, trybem widza i responsywnym interfejsem.
 
 ## Funkcje gry
-- Replika mechaniki Agar.io: jedzenie kulek, pożeranie mniejszych graczy, podziały (Space), wyrzut masy (W), wirusy,
-  fragmentacja przy dużej masie oraz powrót do gry (Enter).
-- Masa gracza ulega stopniowemu rozpadowi jak w oryginale (anti-camping), a komórki łączą się po czasie ochronnym.
+- Replika mechaniki Agar.io: jedzenie kulek (trzy rozmiary, różna wartość masy), pożeranie mniejszych graczy, podziały
+  (Space), wyrzut masy (W), wirusy, fragmentacja przy dużej masie oraz powrót do gry (Enter).
+- Masa gracza zależy od prędkości (mniejsze kulki pędzą szybciej, duże zwalniają), a podział nadaje impuls i pozwala na
+  sprint. Po odpowiednim utyciu można także **zjadać wirusy** zamiast wybuchać, co daje dużą nagrodę punktową.
+- Masa gracza ulega stopniowemu rozpadowi jak w oryginale (anti-camping), a komórki łączą się po czasie ochronnym z
+  lekkim przyspieszeniem.
 - Wirusy można dokarmiać wyrzuconą masą – po przekroczeniu progu wystrzeliwują nowy wirus w losowym kierunku.
 - Leaderboard TOP10 w czasie rzeczywistym, najlepszy wynik gracza, tryb widza po śmierci oraz minimapa pozycji.
 - Obsługa myszy/klawiatury/ekranu dotykowego, płynna kamera i skalowanie pola gry.
+- Stabilniejsze działanie przy wielu graczach: serwer ogranicza częstotliwość broadcastów i odrzuca spam dołączeń,
+  co zmniejsza zużycie CPU/transferu.
 
 ## Wymagania
 - Docker oraz docker-compose **lub** środowisko Node.js 18+ (jeśli chcesz uruchomić bez konteneryzacji).

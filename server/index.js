@@ -5,12 +5,17 @@ const WebSocket = require('ws');
 const { nanoid } = require('nanoid');
 
 const PORT = process.env.PORT || 80;
-const TICK_RATE = 40; // updates per second
+const TICK_RATE = 60; // physics updates per second
+const BROADCAST_RATE = 20; // client updates per second
 const WORLD_SIZE = 7000;
 const START_MASS = 40;
-const FOOD_AMOUNT = 2500;
+const FOOD_AMOUNT = 2800;
+const FOOD_VARIANTS = [
+  { mass: 1, color: '#7bc8ff' },
+  { mass: 2, color: '#ffdf6b' },
+  { mass: 4, color: '#ff7bbd' },
+];
 const VIRUS_AMOUNT = 70;
-const FOOD_MASS = 1;
 const VIRUS_BASE_MASS = 100;
 const EJECT_MASS = 12;
 const SPLIT_MIN_MASS = 30;
@@ -19,6 +24,8 @@ const DECAY_START = 150;
 const DECAY_RATE = 0.0015;
 const RECOMBINE_DELAY = 7 * 1000;
 const VIRUS_SHOOT_THRESHOLD = 30;
+const VIRUS_EAT_FACTOR = 1.3;
+const VIRUS_REWARD = 1.6; // multiplier of virus mass when eaten
 
 const app = express();
 const server = http.createServer(app);
@@ -50,14 +57,17 @@ function radiusFromMass(mass) {
   return Math.sqrt(mass) * 4;
 }
 
-function speedFromMass(mass) {
-  return 260 / Math.sqrt(mass + 10);
+function speedFromMass(mass, cellsCount = 1) {
+  const base = 340 / Math.sqrt(mass + 14);
+  const multi = 1 + Math.max(0, 0.35 - Math.min(0.25, cellsCount * 0.015));
+  return Math.max(22, base * multi);
 }
 
 function spawnFood() {
   while (gameState.food.length < FOOD_AMOUNT) {
     const pos = randomPosition();
-    gameState.food.push({ ...pos, mass: FOOD_MASS, color: `hsl(${Math.random() * 360},70%,60%)` });
+    const variant = FOOD_VARIANTS[Math.floor(Math.random() * FOOD_VARIANTS.length)];
+    gameState.food.push({ ...pos, mass: variant.mass, color: variant.color });
   }
 }
 
@@ -89,15 +99,16 @@ function spawnPlayer(name) {
 }
 
 function moveCells(player) {
+  const cellCount = player.cells.length;
   for (const cell of player.cells) {
     const dx = player.target.x - cell.x;
     const dy = player.target.y - cell.y;
     const dist = Math.hypot(dx, dy) || 1;
-    const speed = speedFromMass(cell.mass) / TICK_RATE;
+    const speed = speedFromMass(cell.mass, cellCount) / TICK_RATE;
     cell.x += (dx / dist) * speed + (cell.vx || 0);
     cell.y += (dy / dist) * speed + (cell.vy || 0);
-    if (cell.vx) cell.vx *= 0.9;
-    if (cell.vy) cell.vy *= 0.9;
+    if (cell.vx) cell.vx *= 0.88;
+    if (cell.vy) cell.vy *= 0.88;
     cell.x = Math.max(-WORLD_SIZE / 2, Math.min(WORLD_SIZE / 2, cell.x));
     cell.y = Math.max(-WORLD_SIZE / 2, Math.min(WORLD_SIZE / 2, cell.y));
   }
@@ -112,11 +123,17 @@ function mergeCells(player) {
       const dist = distance(a, b);
       if (dist < radiusFromMass(a.mass) + radiusFromMass(b.mass) * 0.2) {
         if (a.mass >= b.mass) {
+          const angle = Math.atan2(player.target.y - a.y, player.target.x - a.x);
           a.mass += b.mass;
+          a.vx = (a.vx || 0) + Math.cos(angle) * 0.6;
+          a.vy = (a.vy || 0) + Math.sin(angle) * 0.6;
           player.cells.splice(j, 1);
           j--;
         } else {
+          const angle = Math.atan2(player.target.y - b.y, player.target.x - b.x);
           b.mass += a.mass;
+          b.vx = (b.vx || 0) + Math.cos(angle) * 0.6;
+          b.vy = (b.vy || 0) + Math.sin(angle) * 0.6;
           player.cells.splice(i, 1);
           i--;
           break;
@@ -159,7 +176,10 @@ function consumeViruses(player) {
     for (let i = 0; i < gameState.viruses.length; i++) {
       const virus = gameState.viruses[i];
       if (distance(cell, virus) <= radiusFromMass(cell.mass)) {
-        if (cell.mass > virus.mass + 10) {
+        if (cell.mass > virus.mass * VIRUS_EAT_FACTOR) {
+          cell.mass += virus.mass * VIRUS_REWARD;
+          player.score += virus.mass * VIRUS_REWARD;
+        } else {
           splitIntoFragments(player, cell, 8 + Math.floor(cell.mass / 80));
           cell.mass = Math.max(cell.mass * 0.35, START_MASS);
         }
@@ -177,7 +197,15 @@ function splitIntoFragments(player, cell, parts) {
     const angle = Math.random() * Math.PI * 2;
     const nx = cell.x + Math.cos(angle) * radiusFromMass(cell.mass);
     const ny = cell.y + Math.sin(angle) * radiusFromMass(cell.mass);
-    player.cells.push({ id: nanoid(), x: nx, y: ny, mass: massPer, mergeAt: Date.now() + RECOMBINE_DELAY });
+    player.cells.push({
+      id: nanoid(),
+      x: nx,
+      y: ny,
+      mass: massPer,
+      mergeAt: Date.now() + RECOMBINE_DELAY,
+      vx: Math.cos(angle) * 3.5,
+      vy: Math.sin(angle) * 3.5,
+    });
   }
   cell.mergeAt = Date.now() + RECOMBINE_DELAY;
 }
@@ -240,9 +268,9 @@ function handleSplit(player) {
     const angle = Math.atan2(player.target.y - cell.y, player.target.x - cell.x);
     const nx = cell.x + Math.cos(angle) * (radiusFromMass(cell.mass) * 2);
     const ny = cell.y + Math.sin(angle) * (radiusFromMass(cell.mass) * 2);
-    const impulse = 6;
-    cell.vx = (cell.vx || 0) + Math.cos(angle) * impulse * -0.5;
-    cell.vy = (cell.vy || 0) + Math.sin(angle) * impulse * -0.5;
+    const impulse = 7.5;
+    cell.vx = (cell.vx || 0) + Math.cos(angle) * impulse * -0.4;
+    cell.vy = (cell.vy || 0) + Math.sin(angle) * impulse * -0.4;
     newCells.push({
       id: nanoid(),
       x: nx,
@@ -324,7 +352,12 @@ function broadcast() {
       id: p.id,
       name: p.name,
       color: p.color,
-      cells: p.cells,
+      cells: p.cells.map((c) => ({
+        x: Math.round(c.x * 10) / 10,
+        y: Math.round(c.y * 10) / 10,
+        mass: Math.round(c.mass * 10) / 10,
+        id: c.id,
+      })),
       alive: p.alive,
       isSpectating: p.isSpectating,
     })),
@@ -358,16 +391,23 @@ function tick() {
     if (!player.alive && !player.isSpectating) continue;
     updatePlayer(player);
   }
-  broadcast();
+  const now = Date.now();
+  if (now - (tick.lastBroadcast || 0) >= 1000 / BROADCAST_RATE) {
+    tick.lastBroadcast = now;
+    broadcast();
+  }
 }
 
 wss.on('connection', (ws) => {
   let player = null;
+  let joined = false;
 
   ws.on('message', (raw) => {
     try {
       const { type, data } = JSON.parse(raw);
       if (type === 'join') {
+        if (joined) return;
+        joined = true;
         player = spawnPlayer(data?.name);
         sendLobby(ws, player);
       }
@@ -379,6 +419,7 @@ wss.on('connection', (ws) => {
       } else if (type === 'eject') {
         handleEject(player);
       } else if (type === 'respawn') {
+        if (player) gameState.players.delete(player.id);
         player = spawnPlayer(data?.name || player?.name);
         sendLobby(ws, player);
       }

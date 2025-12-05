@@ -11,7 +11,7 @@
       body {
         margin: 0;
         font-family: 'Segoe UI', sans-serif;
-        background: #0b0b12;
+        background: radial-gradient(circle at 30% 20%, #16204a, #080a16 50%, #05060d 75%);
         color: #f5f5f5;
         overflow: hidden;
       }
@@ -72,6 +72,7 @@
         border-radius: 10px;
         font-size: 14px;
         backdrop-filter: blur(6px);
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
       }
       #leaderboard {
         position: fixed;
@@ -82,6 +83,7 @@
         padding: 12px;
         border-radius: 10px;
         backdrop-filter: blur(6px);
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
       }
       #leaderboard h3 {
         margin: 0 0 8px;
@@ -101,6 +103,7 @@
         border-radius: 10px;
         font-size: 13px;
         line-height: 1.6;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
       }
       #minimap {
         position: fixed;
@@ -112,6 +115,7 @@
         border-radius: 12px;
         padding: 8px;
         box-sizing: border-box;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
       }
       #miniCanvas {
         width: 100%;
@@ -155,6 +159,8 @@
       const ctx = canvas.getContext('2d');
       const mini = document.getElementById('miniCanvas');
       const miniCtx = mini.getContext('2d');
+      const playBtn = document.getElementById('play');
+      const nicknameInput = document.getElementById('nickname');
       let ws;
       let playerId = null;
       let color = '#fff';
@@ -163,6 +169,8 @@
       let target = { x: 0, y: 0 };
       let camera = { x: 0, y: 0, scale: 1 };
       let best = 0;
+      let joining = false;
+      let lastMoveSent = 0;
 
       function resize() {
         canvas.width = window.innerWidth * devicePixelRatio;
@@ -176,6 +184,10 @@
       resize();
 
       function connect(name) {
+        if (joining) return;
+        joining = true;
+        playBtn.disabled = true;
+        playBtn.textContent = 'Łączenie...';
         ws = new WebSocket(location.origin.replace('http', 'ws'));
         ws.addEventListener('open', () => {
           ws.send(JSON.stringify({ type: 'join', data: { name } }));
@@ -187,15 +199,24 @@
             color = data.color;
             worldSize = data.worldSize;
             document.getElementById('overlay').style.display = 'none';
+            playBtn.textContent = 'Wejdź do gry';
+            joining = false;
           }
           if (type === 'update') {
             snapshot = data;
           }
         });
+        ws.addEventListener('close', () => {
+          joining = false;
+          playBtn.disabled = false;
+          playBtn.textContent = 'Wejdź do gry';
+          document.getElementById('overlay').style.display = 'flex';
+        });
       }
 
-      document.getElementById('play').addEventListener('click', () => {
-        const name = document.getElementById('nickname').value || 'Anon';
+      playBtn.addEventListener('click', () => {
+        if (ws && ws.readyState === WebSocket.OPEN) return;
+        const name = nicknameInput.value || 'Anon';
         connect(name);
       });
 
@@ -206,14 +227,21 @@
         };
       }
 
+      function sendMove(nextTarget) {
+        const now = performance.now();
+        if (now - lastMoveSent < 30) return;
+        lastMoveSent = now;
+        ws?.readyState === 1 && ws.send(JSON.stringify({ type: 'move', data: nextTarget }));
+      }
+
       window.addEventListener('mousemove', (e) => {
         target = translatePointer(e.clientX, e.clientY);
-        ws?.readyState === 1 && ws.send(JSON.stringify({ type: 'move', data: target }));
+        sendMove(target);
       });
       window.addEventListener('touchmove', (e) => {
         const t = e.touches[0];
         target = translatePointer(t.clientX, t.clientY);
-        ws?.readyState === 1 && ws.send(JSON.stringify({ type: 'move', data: target }));
+        sendMove(target);
       });
       window.addEventListener('keydown', (e) => {
         if (e.code === 'Space') {
@@ -244,13 +272,19 @@
         const r = Math.sqrt(cell.mass) * 4 * camera.scale;
         const x = window.innerWidth / 2 + (cell.x - camera.x) * camera.scale;
         const y = window.innerHeight / 2 + (cell.y - camera.y) * camera.scale;
+        const gradient = ctx.createRadialGradient(x, y, r * 0.2, x, y, r);
+        gradient.addColorStop(0, 'rgba(255,255,255,0.2)');
+        gradient.addColorStop(1, fill);
         ctx.beginPath();
-        ctx.fillStyle = fill;
+        ctx.fillStyle = gradient;
         ctx.strokeStyle = '#111';
         ctx.lineWidth = 2;
+        ctx.shadowColor = 'rgba(0,0,0,0.35)';
+        ctx.shadowBlur = 10;
         ctx.arc(x, y, r, 0, Math.PI * 2);
         ctx.fill();
         ctx.stroke();
+        ctx.shadowBlur = 0;
         if (name) {
           ctx.fillStyle = '#fff';
           ctx.font = `${Math.max(12, r / 3)}px Inter, sans-serif`;
